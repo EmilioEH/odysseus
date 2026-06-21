@@ -272,6 +272,138 @@ body.bg-pattern-sparkles {
     }
 
     /* Session meta — sits at top of chat area, scrolls with content */
+    /* ── Session Tab Bar ── */
+    .session-tab-bar {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      gap: 2px;
+      padding: 4px 8px 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--fg) 20%, transparent) transparent;
+      position: relative;
+      z-index: 2;
+      /* Subtle bottom border to separate from message area */
+      border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+    .session-tab-bar::-webkit-scrollbar {
+      height: 3px;
+    }
+    .session-tab-bar::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--fg) 20%, transparent);
+      border-radius: 3px;
+    }
+
+    .session-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 7px 7px 0 0;
+      cursor: pointer;
+      white-space: nowrap;
+      font-size: 12px;
+      color: var(--fg);
+      opacity: 0.55;
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: none;
+      transition: opacity 0.12s, background 0.12s, color 0.12s;
+      position: relative;
+      max-width: 180px;
+      flex-shrink: 0;
+    }
+    .session-tab:hover {
+      opacity: 0.85;
+      background: color-mix(in srgb, var(--fg) 5%, transparent);
+    }
+    .session-tab.active {
+      opacity: 1;
+      background: color-mix(in srgb, var(--panel) 80%, var(--bg));
+      border-color: color-mix(in srgb, var(--fg) 10%, transparent);
+    }
+    /* Accent underline for active tab */
+    .session-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent, var(--red));
+      border-radius: 2px 2px 0 0;
+    }
+
+    .session-tab-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 130px;
+    }
+
+    /* Close button — visible on hover or active tab */
+    .session-tab-close {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      color: var(--fg);
+      opacity: 0.4;
+      cursor: pointer;
+      padding: 1px;
+      border-radius: 3px;
+      flex-shrink: 0;
+      transition: opacity 0.1s, background 0.1s;
+    }
+    .session-tab:hover .session-tab-close,
+    .session-tab.active .session-tab-close {
+      display: flex;
+    }
+    .session-tab-close:hover {
+      opacity: 1;
+      background: color-mix(in srgb, var(--fg) 12%, transparent);
+    }
+
+    /* Streaming pulse dot */
+    .tab-stream-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent, var(--red));
+      flex-shrink: 0;
+      animation: tabPulse 1.2s ease-in-out infinite;
+    }
+    .session-tab.streaming.active .tab-stream-dot {
+      display: none; /* user can see the stream directly */
+    }
+    @keyframes tabPulse {
+      0%, 100% { opacity: 0.3; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+
+    /* Completed notification dot */
+    .tab-complete-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #50c878;
+      flex-shrink: 0;
+      animation: tabCompletePulse 2s ease-in-out 3;
+    }
+    .session-tab.completed.active .tab-complete-dot {
+      display: none;
+    }
+    @keyframes tabCompletePulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+
+    /* When tabs are visible, add some breathing room */
+    .chat-container.has-tabs #chat-history {
+      padding-top: 4px;
+    }
     .chat-meta-overlay {
       position: absolute;
       left: 0;

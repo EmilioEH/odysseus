@@ -3,6 +3,7 @@
 // ============================================
 
 import { IS_MAC, isAltGrEvent } from './platform.js';
+import tabsModule from './tabs.js';
 
 const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
@@ -289,4 +290,40 @@ export function initKeyboardShortcuts(modules) {
       return;
     }
   });
+
+  // ── Tab shortcuts (capture phase to beat browser defaults) ──
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+Tab / Ctrl+Shift+Tab — cycle session tabs
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
+      const target = tabsModule.cycleTab(e.shiftKey ? 'prev' : 'next');
+      if (target) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (sessionModule) sessionModule.selectSession(target);
+      }
+      return;
+    }
+    // Ctrl+W — close current session tab (not browser tab)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
+      const activeId = tabsModule.getActiveTabId();
+      if (activeId && tabsModule.getTabCount() > 0) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const switchTo = tabsModule.closeTab(activeId);
+        if (switchTo && sessionModule) {
+          sessionModule.selectSession(switchTo);
+        } else if (!switchTo && sessionModule) {
+          sessionModule.setCurrentSessionId(null);
+          Storage.remove('lastSessionId');
+          const ch = document.getElementById('chat-history');
+          if (ch) ch.innerHTML = '';
+          const cm = document.getElementById('current-meta');
+          if (cm) cm.textContent = 'Odysseus Chat';
+          if (window.chatModule && window.chatModule.showWelcomeScreen) {
+            window.chatModule.showWelcomeScreen();
+          }
+        }
+      }
+    }
+  }, true);  // capture phase
 }

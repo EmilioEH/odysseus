@@ -9,6 +9,7 @@ import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js';
 import themeModule from './theme.js';
 import spinnerModule from './spinner.js';
+import tabsModule from './tabs.js';
 
 const API_BASE = window.location.origin;
 
@@ -98,6 +99,7 @@ function _removeSessionFromLocalState(sid) {
     if (String(el.dataset.sessionId) === id) el.remove();
   });
   _deselectCurrentSession(id);
+  tabsModule.removeSessionFromTabs(id);
 }
 
 function _normalizeSessionsList(fetched) {
@@ -1518,6 +1520,11 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
         history.replaceState(null, '', '#' + id);
       }
     }
+    // Tab system: cache previous session's DOM and open tab for new session
+    if (prevSessionId) {
+      tabsModule.cacheDom(prevSessionId);
+    }
+    tabsModule.openTab(id, _meta ? _meta.name : null);
     // Restore character preset for persistent chats
     try {
       const presetsModule = window.presetsModule || (await import('./presets.js')).default;
@@ -1609,6 +1616,33 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       }
     }
 
+    // Tab cache hit: instant DOM swap without server round-trip
+    if (prevSessionId !== id && !isOC && tabsModule.hasCachedDom(id)) {
+      if (chatHistory) {
+        chatHistory.innerHTML = '';
+        tabsModule.restoreDom(id);
+        chatHistory.style.opacity = '1';
+        chatHistory.classList.remove('no-animate');
+      }
+      // Update sidebar highlight
+      document.querySelectorAll('.list-item.active-session').forEach(el => el.classList.remove('active-session'));
+      const activeEl = document.querySelector(`.list-item[data-session-id="${id}"]`);
+      if (activeEl) activeEl.classList.add('active-session');
+      // Hide research button
+      var _rBtn = document.getElementById('research-toggle-btn');
+      var _rChk = document.getElementById('research-toggle');
+      if (_rBtn) _rBtn.style.display = 'none';
+      if (_rChk) _rChk.checked = false;
+      // Re-attach background stream if any
+      try {
+        if (window.chatModule && window.chatModule.checkBackgroundStream) {
+          window.chatModule.checkBackgroundStream(id);
+        }
+      } catch (_) {}
+      // Stop pulsing notification
+      clearStreamComplete(id);
+      return;
+    }
     // Guard: if the fetched history is empty but the DOM already has message
     // bubbles for the same session (incognito doesn't persist, so /api/history
     // returns []), preserve the DOM instead of wiping it. This fixes the
@@ -1683,6 +1717,8 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
         window.hljs.highlightElement(block);
       });
     }
+    // Cache this session's rendered DOM for instant tab switching later
+    tabsModule.cacheDom(id);
     // Hide research button on session switch — it's only for the session that started it
     var _rBtn = document.getElementById('research-toggle-btn');
     var _rChk = document.getElementById('research-toggle');
@@ -2075,12 +2111,14 @@ export function clearResearching(sessionId) {
 export function markStreaming(sessionId) {
   _streamingSessions.add(sessionId);
   _updateResearchDots();
+  tabsModule.setStreamingTabIds([..._streamingSessions]);
   _updateRailNotifs();
 }
 
 export function clearStreaming(sessionId) {
   _streamingSessions.delete(sessionId);
   _updateResearchDots();
+  tabsModule.setStreamingTabIds([..._streamingSessions]);
   _updateRailNotifs();
 }
 
@@ -2094,6 +2132,8 @@ export function markStreamComplete(sessionId) {
     return;
   }
   _completedSessions.add(sessionId);
+  tabsModule.setStreamingTabIds([..._streamingSessions]);
+  tabsModule.setCompletedTabIds([..._completedSessions]);
   _updateResearchDots();
   _updateRailNotifs();
   // Show notification dot on Chats section if collapsed
@@ -2228,6 +2268,7 @@ async function _checkServerStream(sessionId) {
 
 export function clearStreamComplete(sessionId) {
   _completedSessions.delete(sessionId);
+  tabsModule.setCompletedTabIds([..._completedSessions]);
   // Direct DOM cleanup in case _updateResearchDots misses it
   var item = document.querySelector(`.list-item[data-session-id="${sessionId}"]`);
   if (item) item.classList.remove('stream-complete');
@@ -3127,7 +3168,8 @@ const sessionModule = {
   closeArchive,
   setSessionHasDocs,
   getSortMode,
-  setSortMode
+  setSortMode,
+  tabs: tabsModule
 };
 
 export { updateModelPicker };
