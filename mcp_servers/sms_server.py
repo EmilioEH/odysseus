@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
+import traceback
 from pathlib import Path
 
 from mcp.server import Server
@@ -33,37 +33,44 @@ sys.path.insert(0, str(_ODYSSEUS_SERVER / "tools"))
 
 server = Server("sms")
 
-# Late-initialized (set during first tool call)
+# Eagerly initialized at module load (fails fast, logged to stderr)
 _drive_client = None
 _sms_tools = None
-_initialized = False
+_init_error: str | None = None
 
 _CREDENTIALS_PATH = _ODYSSEUS_SERVER / "credentials" / "drive_token.json"
 
 
-def _text_result(text: str) -> list[TextContent]:
-    return [TextContent(type="text", text=text)]
-
-
-def _ensure_init():
-    """Lazy-init DriveClient + SmsTools on first use."""
-    global _drive_client, _sms_tools, _initialized
-    if _initialized:
-        return
-    _initialized = True
-
+def _try_init():
+    """Attempt to initialize DriveClient + SmsTools. Retries on each call
+    until it succeeds (handles transient network/token-refresh errors)."""
+    global _drive_client, _sms_tools, _init_error
+    if _sms_tools is not None:
+        return True
     if not _CREDENTIALS_PATH.exists():
-        return
-
+        _init_error = f"Credentials file not found: {_CREDENTIALS_PATH}"
+        print(f"SMS server: {_init_error}", file=sys.stderr)
+        return False
     try:
         from drive_client import DriveClient
         from sms_tools import SmsTools
 
         _drive_client = DriveClient.from_credentials_file(str(_CREDENTIALS_PATH))
         _sms_tools = SmsTools(_drive_client)
+        _init_error = None
+        print("SMS server: initialized successfully", file=sys.stderr)
+        return True
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error("SMS server init failed: %s", e)
+        _init_error = f"{type(e).__name__}: {e}"
+        _drive_client = None
+        _sms_tools = None
+        print(f"SMS server init failed (will retry): {_init_error}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return False
+
+
+def _text_result(text: str) -> list[TextContent]:
+    return [TextContent(type="text", text=text)]
 
 
 # -- Tool definitions -------------------------------------------------
@@ -201,12 +208,9 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    _ensure_init()
-
-    if not _sms_tools:
+    if not _try_init():
         return _text_result(
-            "Error: SMS tools unavailable. "
-            "Google Drive credentials not found or initialization failed."
+            f"Error: SMS tools unavailable. {_init_error or 'Unknown init error'}"
         )
 
     try:
@@ -239,6 +243,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 # -- Entry point ------------------------------------------------------
 
 async def run():
+    # Try to init eagerly at startup so the first tool call is fast
+    _try_init()
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
