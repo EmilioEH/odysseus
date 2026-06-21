@@ -49,6 +49,7 @@ ALWAYS_AVAILABLE = frozenset({
     "read_file",
     "write_file",
     "edit_file",
+    "grep",
     # Parallel autonomous agents. Base-available so the Parallel toggle can
     # surface it deterministically; the chat route disables it again whenever
     # the toggle is OFF, so it never reaches the model in ordinary turns.

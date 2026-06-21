@@ -1361,6 +1361,15 @@ export async function loadSessions() {
     sessions = _normalizeSessionsList(fetched);
     renderSessionList();
 
+    // Restore previously open tabs (including pinned tabs).
+    // Must happen before the auto-select logic so pinned tabs influence targetId.
+    const _tabRestore = tabsModule.restoreTabs();
+    // Pre-populate tab metadata from the session list
+    for (const tid of _tabRestore.tabIds) {
+      const ts = sessions.find(s => s.id === tid);
+      if (ts) tabsModule.openTab(tid, ts.name);
+    }
+
     const sessionsSection = uiModule.el('sessions-section');
     if (sessions.length === 0) {
       sessionsSection.classList.add('hidden');

@@ -37805,3 +37805,124 @@ body.theme-frosted .modal {
 .log-line-default {
   color: var(--fg, #9cdef2);
 }
+
+/* ── Session Tab Bar — mobile enhancements ── */
+
+/* Scroll fade indicators */
+.session-tab-bar.scroll-left::before,
+.session-tab-bar.scroll-right::after {
+  content: '';
+  position: sticky;
+  flex-shrink: 0;
+  width: 20px;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+.session-tab-bar.scroll-left::before {
+  left: 0;
+  background: linear-gradient(to right, var(--bg), transparent);
+}
+.session-tab-bar.scroll-right::after {
+  right: 0;
+  background: linear-gradient(to left, var(--bg), transparent);
+}
+
+/* "+" new tab button */
+.tab-new-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  margin-bottom: 1px;
+  border: 1px dashed color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+}
+.tab-new-btn:hover,
+.tab-new-btn:active {
+  opacity: 0.7;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 25%, transparent);
+}
+
+/* Pinned tabs — smaller, left-aligned, no close button */
+.session-tab.pinned {
+  min-width: 32px;
+  padding: 5px 6px;
+}
+.session-tab.pinned .session-tab-label {
+  max-width: 60px;
+  font-size: 11px;
+}
+
+/* Unread badge */
+.tab-unread-badge {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  flex-shrink: 0;
+  animation: unreadPulse 2s ease-in-out infinite;
+}
+@keyframes unreadPulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+/* Context menu items */
+.tab-context-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* Drag ghost */
+.session-tab.tab-drag-ghost {
+  opacity: 0.85 !important;
+  transform: scale(1.05);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+
+/* Mobile-specific touch sizing */
+@media (max-width: 768px) {
+  .session-tab-bar {
+    padding: 4px 6px 0;
+    gap: 3px;
+    /* Slightly taller touch targets */
+    min-height: 38px;
+  }
+  .session-tab {
+    padding: 7px 12px;
+    font-size: 13px;
+    max-width: 140px;
+    /* Bigger touch targets for close button */
+    min-height: 32px;
+  }
+  .session-tab-label {
+    max-width: 90px;
+  }
+  .session-tab-close {
+    width: 20px;
+    height: 20px;
+    /* Always visible on mobile since no hover */
+    display: flex;
+  }
+  .session-tab.pinned .session-tab-close {
+    display: none;
+  }
+  .tab-new-btn {
+    width: 32px;
+    height: 32px;
+  }
+  .tab-context-item {
+    padding: 12px 16px;
+    font-size: 14px;
+    min-height: 44px;
+  }
+}
