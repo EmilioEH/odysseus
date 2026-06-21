@@ -3717,7 +3717,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       pre.dataset.btnPosComputed = '1';
     }, true);
 
-    // Tab suspension recovery: when user tabs back in, check if stream froze
+    // Tab suspension recovery: when user tabs back in, check if stream froze.
+    // The server keeps running via agent_runs (detached), so the fix is to
+    // drop the dead local reader and reconnect to the server's live run
+    // (or reload the session if it finished while we were away).
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
       if (!isStreaming) return;
@@ -3726,19 +3729,23 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const staleSince = Date.now() - _lastReaderActivity;
       if (staleSince < 20000) return; // Active recently, probably fine
 
-      // Reader hasn't produced data in 5+ seconds after tab resume.
+      // Reader hasn't produced data in a while after tab resume.
       // Give it a short grace period then recover.
       console.warn('[tab-recovery] Stream appears frozen (no activity for ' + Math.round(staleSince/1000) + 's). Recovering...');
 
-      setTimeout(() => {
+      setTimeout(async () => {
         // Re-check — maybe the reader woke up during the grace period
         if (!isStreaming) return;
         const stillStale = Date.now() - _lastReaderActivity;
         if (stillStale < 5000) return; // Came back to life
 
-        console.warn('[tab-recovery] Stream confirmed dead. Aborting and reloading session.');
+        // Capture the session before tearing down local state
+        const recoverSessionId = _streamSessionId
+          || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
+        console.warn('[tab-recovery] Stream confirmed dead. Aborting local reader for session', recoverSessionId);
 
-        // Abort the frozen stream, but preserve the visible bubble.
+        // Abort the frozen LOCAL reader only — do NOT send /api/chat/stop,
+        // because the server-side run is detached and must keep running.
         if (currentAbort) {
           currentAbort._reason = 'recovery';
           currentAbort.abort();
@@ -3751,11 +3758,51 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           _webLockRelease = null;
         }
 
-        // Reset UI state
-        var _submitBtn = document.getElementById('submit');
-        updateSubmitButton('idle', _submitBtn);
-        var _msgInput = document.getElementById('message');
-        if (_msgInput) _msgInput.disabled = false;
+        if (!recoverSessionId) {
+          // No session ID captured — nothing to reconnect to
+          var _submitBtn = document.getElementById('submit');
+          updateSubmitButton('idle', _submitBtn);
+          var _msgInput = document.getElementById('message');
+          if (_msgInput) _msgInput.disabled = false;
+          return;
+        }
+
+        try {
+          // Ask the server: is the detached run still going?
+          const statusRes = await fetch(`${API_BASE}/api/chat/stream_status/${encodeURIComponent(recoverSessionId)}`, { credentials: 'same-origin' });
+
+          if (statusRes.ok) {
+            const info = await statusRes.json();
+            if (info.status === 'streaming' || info.detached) {
+              // Server is still generating — reconnect via resumeStream
+              console.warn('[tab-recovery] Server run still active. Reconnecting...');
+              if (window.chatModule && window.chatModule.resumeStream) {
+                const attached = await window.chatModule.resumeStream(recoverSessionId);
+                if (attached) return; // resumeStream takes over rendering
+              }
+              // resumeStream failed or unavailable — fall through to reload
+            }
+          }
+          // Server run is done (or not found) — the response is in the DB.
+          // Reload the session so the saved message appears.
+          console.warn('[tab-recovery] Server run complete or unavailable. Reloading session.');
+          if (window.sessionModule && window.sessionModule.selectSession) {
+            await window.sessionModule.selectSession(recoverSessionId);
+          }
+        } catch (e) {
+          console.warn('[tab-recovery] Recovery check failed, reloading session:', e);
+          try {
+            if (window.sessionModule && window.sessionModule.selectSession) {
+              await window.sessionModule.selectSession(recoverSessionId);
+            }
+          } catch (_) {}
+        } finally {
+          // Ensure UI is unblocked regardless of outcome
+          var _submitBtn = document.getElementById('submit');
+          updateSubmitButton('idle', _submitBtn);
+          var _msgInput = document.getElementById('message');
+          if (_msgInput) _msgInput.disabled = false;
+        }
       }, 2000); // 2 second grace period
     });
 
