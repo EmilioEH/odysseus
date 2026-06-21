@@ -42,6 +42,13 @@ ALWAYS_AVAILABLE = frozenset({
     "ask_user",
     # Write back to the active plan (tick steps done / revise) during execution.
     "update_plan",
+    # Core file/shell tools — the agent needs these to do anything useful
+    # even when RAG retrieval returns nothing for a vague message.
+    "bash",
+    "python",
+    "read_file",
+    "write_file",
+    "edit_file",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
