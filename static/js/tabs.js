@@ -114,6 +114,8 @@ export function closeTab(sessionId) {
   _openTabs.delete(sessionId);
   _domCache.delete(sessionId);
   _unreadTabIds.delete(sessionId);
+  // Intentionally unpin on close: if the user reopens this session later
+  // they must re-pin it manually. This avoids orphaned pinned entries.
   _pinnedTabs.delete(sessionId);
   _savePinned();
   _persistOpenTabs();
@@ -121,10 +123,10 @@ export function closeTab(sessionId) {
     const remaining = Array.from(_openTabs.keys());
     _activeTabId = remaining.length > 0 ? remaining[remaining.length - 1] : null;
     renderTabBar();
-    return _activeTabId;
+    return _activeTabId; // truthy → caller switches to the new active tab
   }
   renderTabBar();
-  return null;
+  return null; // falsy → caller shows welcome screen (or no-op for background close)
 }
 
 export function activateTab(sessionId) {
@@ -197,8 +199,11 @@ function _showContextMenu(sessionId, anchorEl) {
     { separator: true },
     { label: 'Close tab', action: () => {
       const switchTo = closeTab(sessionId);
-      if (switchTo && window.sessionModule) window.sessionModule.selectSession(switchTo);
-      else if (!switchTo) _showWelcome();
+      if (switchTo && window.sessionModule) {
+        window.sessionModule.selectSession(switchTo);
+      } else {
+        _showWelcome();
+      }
     }},
     { label: 'Close other tabs', action: () => {
       const ids = Array.from(_openTabs.keys()).filter(id => id !== sessionId);
@@ -436,12 +441,21 @@ function _endDragReorder(sessionId) {
     }
   }
 
-  // Reorder
+  // Reorder — clamp to pinned/unpinned boundary so unpinned tabs
+  // can't be dropped into the pinned section and vice versa.
   const ids = Array.from(_openTabs.keys());
   const oldIdx = ids.indexOf(sessionId);
   if (oldIdx !== -1 && oldIdx !== newIdx) {
+    const pinnedCount = ids.filter(id => _pinnedTabs.has(id)).length;
+    const isDraggedPinned = _pinnedTabs.has(sessionId);
+    let clampedIdx = newIdx;
+    if (!isDraggedPinned) {
+      clampedIdx = Math.max(newIdx, pinnedCount);
+    } else {
+      clampedIdx = Math.min(newIdx, pinnedCount - 1);
+    }
     ids.splice(oldIdx, 1);
-    ids.splice(newIdx, 0, sessionId);
+    ids.splice(clampedIdx, 0, sessionId);
     const newMap = new Map();
     ids.forEach(id => newMap.set(id, _openTabs.get(id)));
     _openTabs = newMap;

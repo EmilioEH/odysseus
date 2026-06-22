@@ -56,7 +56,7 @@ Browser-style tab bar for managing multiple LLM conversations in Odysseus. Built
   - Show a 📌 indicator
   - Always appear first (left side) in the tab bar
   - Have no close button
-  - Auto-restore on every page load (persisted to localStorage under key `odysseus_pinned_tabs`)
+  - Auto-restore on every page load (persisted to localStorage under key `odysseus-pinned-tabs`)
 - Unpinned tabs also persist and restore if they still exist on the server
 
 ---
@@ -79,9 +79,10 @@ Unread badges clear automatically when you tap the tab.
 
 | Key | Type | Purpose |
 |-----|------|---------|
-| `odysseus_pinned_tabs` | `string[]` | Array of pinned session IDs |
-| `odysseus_open_tabs` | `string[]` | Array of all open (non-pinned) session IDs |
-| `odysseus_tab_order` | `string[]` | Full ordered tab list for drag-reorder persistence |
+| `odysseus-pinned-tabs` | `string[]` | Array of pinned session IDs (persisted as JSON) |
+| `odysseus-open-tabs` | `{tabs, active}` | Object with `tabs` (array of session IDs) and `active` (current active ID) |
+
+The open-tabs key stores both the ordered list and the active tab in a single JSON object — there is no separate `tab_order` key.
 
 ### Startup Flow
 
@@ -169,17 +170,17 @@ renderTabBar()                    // Rebuild the tab bar DOM
 | `.session-tab` | Individual tab | Each tab button |
 | `.session-tab.active` | Active tab | Highlighted current tab |
 | `.session-tab.pinned` | Pinned tab | Pinned styling (no close button) |
-| `.session-tab-streaming` | Streaming tab | Has pulsing dot |
-| `.session-tab-completed` | Completed tab | Has static dot |
-| `.session-tab-unread` | Unread tab | Has unread badge |
-| `.tab-name` | Tab label | Text inside tab |
-| `.tab-close-btn` | Close button | The "×" |
-| `.tab-add-btn` | "+" button | New session button |
+| `.session-tab.streaming` | Streaming tab | Has pulsing dot |
+| `.session-tab.completed` | Completed tab | Has static dot |
+| `.session-tab.unread` | Unread tab | Has unread badge |
+| `.session-tab-label` | Tab label | Text inside tab |
+| `.session-tab-close` | Close button | The "×" |
+| `.tab-new-btn` | "+" button | New session button |
 | `.tab-context-menu` | Context menu | Long-press popup |
 | `.tab-context-item` | Menu item | Row inside context menu |
-| `.tab-scroll-fade-left` | Left fade | Overflow indicator (left) |
-| `.tab-scroll-fade-right` | Right fade | Overflow indicator (right) |
-| `.tab-ghost` | Drag ghost | Floating clone during drag |
+| `.scroll-left` | Left fade | Overflow indicator (left edge of bar) |
+| `.scroll-right` | Right fade | Overflow indicator (right edge of bar) |
+| `.tab-drag-ghost` | Drag ghost | Floating clone during drag |
 
 ---
 
