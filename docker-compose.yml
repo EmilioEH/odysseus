@@ -69,6 +69,7 @@ services:
       #   PUID=1001
       #   PGID=1001
       # Find yours with:  id -u  /  id -g
+      - GH_CONFIG_DIR=/app/data/gh
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
     depends_on:
