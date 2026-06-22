@@ -1626,7 +1626,13 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     }
 
     // Tab cache hit: instant DOM swap without server round-trip
-    if (prevSessionId !== id && !isOC && tabsModule.hasCachedDom(id)) {
+    // Skip the cache if the session's background stream completed while
+    // the user was away — the cached DOM is stale (partial streaming output)
+    // and the DB has the final response. Fall through to the server fetch.
+    const _cacheIsStale = _completedSessions.has(id) || (function () {
+      try { return window.chatModule && window.chatModule.hasActiveStream && window.chatModule.hasActiveStream(id); } catch (_) { return false; }
+    })();
+    if (prevSessionId !== id && !isOC && !_cacheIsStale && tabsModule.hasCachedDom(id)) {
       if (chatHistory) {
         chatHistory.innerHTML = '';
         tabsModule.restoreDom(id);
@@ -1652,6 +1658,8 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       clearStreamComplete(id);
       return;
     }
+    // Cache was stale — invalidate it so the fresh server render gets cached next
+    if (_cacheIsStale) tabsModule.invalidateDom(id);
     // Guard: if the fetched history is empty but the DOM already has message
     // bubbles for the same session (incognito doesn't persist, so /api/history
     // returns []), preserve the DOM instead of wiping it. This fixes the
