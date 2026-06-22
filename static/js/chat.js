@@ -45,12 +45,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
   let _hideUserBubble = false; // Skip user bubble entirely (e.g. continue after stop)
   let _pendingContinue = null; // Stores the stopped AI element to merge with new response
+  let _currentSourcesHtml = ''; // Module-level mirror of streaming-closure _sourcesHtml (accessible from detachCurrentStream)
   // ── Auto-recovery: when a turn's stream silently dies (connection drop) or
   // goes quiet while the connection is alive, re-engage the model with a
   // completion handshake instead of leaving it hung. Capped so it can't loop.
   let _autoNudges = 0;             // handshakes fired for the CURRENT user turn
   let _autoContinuePending = false; // marks the next submit as an auto-continue (don't reset the counter)
-  let _currentSourcesHtml = ''; // Module-level mirror of streaming-closure _sourcesHtml (accessible from detachCurrentStream)
   const _AUTO_NUDGE_CAP = 3;
 
   // shortModel and modelColor are now in chatRenderer.js
@@ -111,11 +111,56 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
+  let _screenLockSessionId = null; // Session whose stream was in flight when screen locked
+
+  /**
+   * Poll the server for a background stream that lost its client-side SSE
+   * connection (screen lock, app switch, browser tab discard, etc.).
+   *
+   * The server-side run continues in agent_runs after the client disconnects.
+   * This polls /api/chat/stream_status/{id} every 2s until the run finishes,
+   * then marks the background entry 'completed' so checkBackgroundStream and
+   * selectSession can fetch the final response from the DB.
+   */
+  function _pollServerForCompletion(sessionId) {
+    if (!sessionId || !_backgroundStreams.has(sessionId)) return;
+    var entry = _backgroundStreams.get(sessionId);
+    if (entry._completionPollId) return; // already polling
+
+    entry._completionPollId = setInterval(async () => {
+      try {
+        var res = await fetch(`${API_BASE}/api/chat/stream_status/${encodeURIComponent(sessionId)}`, { credentials: 'same-origin' });
+        if (res.ok) {
+          // Server still running — keep polling
+          return;
+        }
+        // 404 or other error → run no longer active → check DB
+      } catch (_) {
+        // Network error during poll — keep trying; the server may just be slow
+        return;
+      }
+      // Server says no active run → response is in the DB
+      clearInterval(entry._completionPollId);
+      entry._completionPollId = null;
+      entry.status = 'completed';
+      // Fire sidebar dot + push notification (mirror the normal [DONE] path)
+      try {
+        if (sessionModule && sessionModule.markStreamComplete) {
+          sessionModule.markStreamComplete(sessionId);
+        }
+      } catch (_) {}
+      try {
+        _notifyStreamComplete(sessionId, entry.query || '');
+        _insertStreamDoneToast(sessionId, entry.query || '');
+      } catch (_) {}
+    }, 2000);
+  }
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
-    return _streamSessionId === sessionId || _backgroundStreams.has(sessionId) ||
-           _resumingStreams.has(sessionId);
+    if (_streamSessionId === sessionId || _resumingStreams.has(sessionId)) return true;
+    var bg = _backgroundStreams.get(sessionId);
+    return bg && bg.status !== 'completed' && bg.status !== 'error';
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -302,6 +347,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         _clearResearchTimer();
       }
       abortCurrentRequest(true);  // explicit user Stop → also cancel the detached server run
+      _screenLockSessionId = null; // explicit stop — cancel screen-lock recovery
 
       // Clean up any running agent thread nodes (stop wave animation, remove "running" state)
       document.querySelectorAll('.agent-thread-node.running').forEach(node => {
@@ -543,6 +589,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // Capture session ID for background stream detection
     const streamSessionId = sessionModule.getCurrentSessionId();
     _streamSessionId = streamSessionId;
+    _screenLockSessionId = streamSessionId; // track for screen-lock recovery
     const streamQuery = msg;
     _lastReaderActivity = Date.now();
 
@@ -1338,6 +1385,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
             if (data === '[DONE]') {
               _streamSawDone = true;
+              _screenLockSessionId = null; // clean completion — cancel screen-lock recovery
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone) {
@@ -2866,6 +2914,37 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       } // end if (!_isBgFinal)
 
     } catch (err) {
+      // ── Screen-lock / tab-hidden detection ─────────────────────
+      // When the tab is hidden (screen locked, tab switched), the SSE
+      // connection drops and reader.read() throws. The server-side
+      // agent_runs keeps generating — the visibilitychange handler will
+      // reconnect when the user unlocks. Do NOT auto-nudge (that would
+      // cancel the real run and replace it with a confused handshake).
+      const _tabHidden = document.visibilityState !== 'visible' || document.hidden;
+      const _isRecoverable = _isRecoverableStreamErr(err);
+
+      if (_tabHidden && _isRecoverable) {
+        // Page is hidden, this is a connection drop, not a real error.
+        // Clean up the partial bubble — recovery (resumeStream or
+        // selectSession) will recreate it from the server-side run.
+        if (holder && holder.parentNode) holder.remove();
+        if (spinner && spinner.element) try { spinner.destroy(); } catch (_) {}
+        _cancelThinkingTimer();
+        _removeThinkingSpinner();
+        document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+        // If this stream was detached to a background entry (user switched
+        // sessions before the lock), the visibilitychange handler won't
+        // recover it (_screenLockSessionId was cleared by detach).  Start
+        // a server poll so the entry flips to 'completed' when the run
+        // finishes and the user sees the response on next navigation.
+        if (_backgroundStreams.has(streamSessionId)) {
+          _pollServerForCompletion(streamSessionId);
+        }
+        // Fall through to finally — DON'T call _tryAutoRecover, DON'T
+        // clear _screenLockSessionId (it's the visibilitychange key).
+        return;
+      }
+
       _renderStream();
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
@@ -2886,7 +2965,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             sessionModule.clearStreaming(streamSessionId);
           }
         } else if (bgErr) {
-          bgErr.status = 'error';
+          // If the error is a recoverable connection drop (screen lock, app
+          // switch, browser tab discard), the server-side run is still going.
+          // Don't mark it as 'error' — keep 'running' and start a server poll
+          // so we detect when the response lands in the DB.
+          if (_isRecoverableStreamErr(err)) {
+            _pollServerForCompletion(streamSessionId);
+          } else {
+            bgErr.status = 'error';
+          }
           if (sessionModule && sessionModule.clearStreaming) {
             sessionModule.clearStreaming(streamSessionId);
           }
@@ -3339,6 +3426,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (sessionModule && sessionModule.markStreaming) {
       sessionModule.markStreaming(sessionId);
     }
+    // Clear _screenLockSessionId — the stream was deliberately detached, not
+    // dropped by a screen lock.  Without this, the visibilitychange handler
+    // would yank the user back to this session when they return from an app
+    // switch (even though they intentionally navigated away).
+    if (_screenLockSessionId === sessionId) _screenLockSessionId = null;
     // Clear local state WITHOUT aborting the fetch
     currentAbort = null;
     isStreaming = false;
@@ -3509,11 +3601,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     if (entry.status === 'completed') {
       // Response is already saved to DB and will appear in history — just clean up
+      if (entry._completionPollId) { clearInterval(entry._completionPollId); entry._completionPollId = null; }
       _backgroundStreams.delete(sessionId);
       return;
     }
 
     if (entry.status === 'error') {
+      if (entry._completionPollId) { clearInterval(entry._completionPollId); entry._completionPollId = null; }
       _backgroundStreams.delete(sessionId);
       var box = document.getElementById('chat-history');
       if (box) {
@@ -3563,8 +3657,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           if (holder.parentNode) holder.remove();
           return;
         }
+        var curPoll = _backgroundStreams.get(sessionId);
         if (!curPoll || curPoll.status !== 'running') {
           clearInterval(pollId);
+          if (curPoll && curPoll._completionPollId) { clearInterval(curPoll._completionPollId); curPoll._completionPollId = null; }
           spinner.destroy();
           if (holder.parentNode) holder.remove(); // Remove entire holder, not just spinner
           _backgroundStreams.delete(sessionId);
@@ -3740,6 +3836,61 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // (or reload the session if it finished while we were away).
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
+
+      // ── Screen-lock recovery ──────────────────────────────────
+      // When the screen locks, the SSE connection drops, isStreaming
+      // becomes false, and the existing freeze-recovery path skips.
+      // But the server-side agent_runs keeps generating — when the
+      // user unlocks, reconnect to the live stream or reload the
+      // session to show the DB-saved response.
+      if (!isStreaming && _screenLockSessionId) {
+        const lockedSid = _screenLockSessionId;
+        _screenLockSessionId = null;
+        (async () => {
+          try {
+            // Check if the server run is still active
+            const statusRes = await fetch(`${API_BASE}/api/chat/stream_status/${encodeURIComponent(lockedSid)}`, { credentials: 'same-origin' });
+
+            if (statusRes.ok) {
+              const info = await statusRes.json();
+              if (info.status === 'streaming' || info.detached) {
+                // Server is still generating — try to reconnect live
+                console.warn('[screen-lock-recovery] Server run still active. Reconnecting...');
+                if (window.chatModule && window.chatModule.resumeStream) {
+                  const attached = await window.chatModule.resumeStream(lockedSid);
+                  if (attached) return; // resumeStream handles everything
+                }
+              }
+            }
+
+            // Server is done or resumeStream failed — reload session
+            // to pick up the DB-saved response.
+            console.warn('[screen-lock-recovery] Reloading session to show saved response.');
+            const curSid = sessionModule.getCurrentSessionId &&
+                           sessionModule.getCurrentSessionId();
+            if (curSid !== lockedSid) {
+              await sessionModule.selectSession(lockedSid);
+            } else {
+              await sessionModule.selectSession(lockedSid);
+            }
+            const sb = document.getElementById('submit');
+            const mi = document.getElementById('message');
+            updateSubmitButton('idle', sb);
+            if (mi) mi.disabled = false;
+          } catch (e) {
+            console.warn('[screen-lock-recovery] Failed:', e);
+            try {
+              await sessionModule.selectSession(lockedSid);
+            } catch (_) {}
+            const sb = document.getElementById('submit');
+            const mi = document.getElementById('message');
+            updateSubmitButton('idle', sb);
+            if (mi) mi.disabled = false;
+          }
+        })();
+        return;
+      }
+
       if (!isStreaming) return;
 
       // Stream claims to be running — check if reader is actually alive
