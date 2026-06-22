@@ -100,7 +100,15 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         try:
             await asyncio.wait({prev_task})
         except asyncio.CancelledError:
-            raise            # our own cancellation — propagate
+            # Clean up before propagating — subscribers must be unblocked.
+            for q in list(run.subscribers):
+                try:
+                    q.put_nowait((None, None))
+                except Exception:
+                    pass
+            _schedule_evict(session_id)
+            run.status = "stopped"
+            raise
         except Exception:
             pass
     try:

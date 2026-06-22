@@ -50,6 +50,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   // completion handshake instead of leaving it hung. Capped so it can't loop.
   let _autoNudges = 0;             // handshakes fired for the CURRENT user turn
   let _autoContinuePending = false; // marks the next submit as an auto-continue (don't reset the counter)
+  let _currentSourcesHtml = ''; // Module-level mirror of streaming-closure _sourcesHtml (accessible from detachCurrentStream)
   const _AUTO_NUDGE_CAP = 3;
 
   // shortModel and modelColor are now in chatRenderer.js
@@ -1756,6 +1757,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   // Store sources HTML in background map
                   if (json.data && json.data.length > 0) {
                     _sourcesHtml = _buildSourcesBox(json.data, 'research');
+                    _currentSourcesHtml = _sourcesHtml;
                     var bgE = _backgroundStreams.get(streamSessionId);
                     if (bgE) bgE.sourcesHtml = _sourcesHtml;
                   }
@@ -1771,6 +1773,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (json.data && json.data.length > 0) {
                   _sourcesData = json.data; _sourcesType = 'research';
                   _sourcesHtml = _buildSourcesBox(json.data, 'research');
+                  _currentSourcesHtml = _sourcesHtml;
                 }
                 if (document.hidden) {
                   _notifyResearchComplete(_rSid2 || '', holder._researchQuery || '');
@@ -1807,6 +1810,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (_isBg) {
                   if (json.data && json.data.length > 0) {
                     _sourcesHtml = _buildSourcesBox(json.data, 'web');
+                    _currentSourcesHtml = _sourcesHtml;
                     var bgE2 = _backgroundStreams.get(streamSessionId);
                     if (bgE2) bgE2.sourcesHtml = _sourcesHtml;
                   }
@@ -1817,6 +1821,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (json.data && json.data.length > 0) {
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
+                  _currentSourcesHtml = _sourcesHtml;
                 }
               } else if (json.type === 'workspace_rejected') {
                 // Server refused to bind the posted workspace (deleted folder,
@@ -2301,7 +2306,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               } else if (json.type === 'doc_stream_delta') {
                 if (_isBg) {
                   var bgDocDelta = _backgroundStreams.get(streamSessionId);
-                  if (bgDocDelta) bgDocDelta._docContent = json.content || '';
+                  if (bgDocDelta) bgDocDelta._docContent = (bgDocDelta._docContent || '') + (json.content || '');
                   continue;
                 }
                 if (documentModule) {
@@ -3324,7 +3329,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     _backgroundStreams.set(sessionId, {
       status: 'running',
       accumulated: currentAccumulated,
-      sourcesHtml: '',
+      sourcesHtml: _currentSourcesHtml,
       findingsData: null,
       abortCtrl: currentAbort,
       query: currentHolder ? (currentHolder._researchQuery || '') : '',
@@ -3557,11 +3562,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           spinner.destroy();
           if (holder.parentNode) holder.remove();
           return;
-        }
-        // Update doc content while polling
-        var curPoll = _backgroundStreams.get(sessionId);
-        if (curPoll && curPoll._docContent && documentModule) {
-          documentModule.streamDocDelta(curPoll._docContent);
         }
         if (!curPoll || curPoll.status !== 'running') {
           clearInterval(pollId);
