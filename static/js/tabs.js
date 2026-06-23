@@ -480,23 +480,35 @@ function _updateScrollIndicators() {
 // ── New tab button handler ──
 
 function _onNewTabClick() {
-  // Delegate to the session module's new-session logic
+  // Delegate to the session module's new-session logic —
+  // same pattern as the icon-rail "+" button in app.js, but
+  // immediately materialize so a tab appears right away (the
+  // rail button can defer because the user immediately types;
+  // the tab "+" must show a tab on tap).
   if (window.sessionModule) {
     const mod = window.sessionModule;
-    // Use the same logic as the sidebar "+" — create a new session
-    const name = new Date().toLocaleTimeString();
-    const fd = new FormData();
-    fd.append('name', name);
-    fetch('/api/session', { method: 'POST', body: fd })
+    fetch('/api/default-chat')
       .then(r => r.json())
-      .then(data => {
-        if (data && data.id) {
-          mod.loadSessions().then(() => {
-            mod.selectSession(data.id);
-          });
+      .then(async dc => {
+        if (dc && dc.endpoint_url && dc.model) {
+          mod.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+          // Immediately create the server-side session so a tab appears.
+          // materializePendingSession → loadSessions → selectSession →
+          // openTab → renderTabBar will render the new tab automatically.
+          const ok = await mod.materializePendingSession();
+          if (!ok || !mod.getCurrentSessionId()) {
+            // Server rejected or no models — fall back to welcome screen
+            _showWelcome();
+          }
+        } else {
+          // No default model configured — show welcome screen
+          _showWelcome();
         }
       })
-      .catch(err => console.error('[tabs] new session error:', err));
+      .catch(err => {
+        console.error('[tabs] failed to fetch default chat:', err);
+        _showWelcome();
+      });
   }
 }
 
