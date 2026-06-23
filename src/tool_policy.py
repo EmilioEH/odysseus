@@ -63,7 +63,6 @@ _COMMON_TOOL_NAMES = {
     "manage_webhooks",
     "mark_email_read",
     "pipeline",
-    "spawn_agents",
     "python",
     "read_email",
     "read_file",
